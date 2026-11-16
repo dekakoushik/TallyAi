@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  tallyai:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tallyai-dashboard
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - TALLY_HOST=http://115.246.171.163
+      - TALLY_PORT=9000
+      - SYNC_INTERVAL_MINUTES=5
+      - DATABASE_URL=sqlite:////app/data/tally_dashboard.db
+    volumes:
+      - tallyai-data:/app/data
+
+volumes:
+  tallyai-data:
