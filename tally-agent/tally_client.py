@@ -13,14 +13,14 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger("TallyClient")
 
 class TallyClient:
-    def __init__(self, host: str = "http://127.0.0.1", port: int = 9000, timeout: int = 60):
+    def __init__(self, host: str = "http://127.0.0.1", port: int = 9000, timeout: int = 180):
         self.url = f"{host}:{port}"
         self.timeout = timeout
 
     def check_connection(self) -> bool:
-        """Pings Tally XML port to see if Tally is online."""
+        """Pings Tally XML port with a tiny request."""
         try:
-            resp = requests.post(self.url, data=templates.get_companies_xml(), timeout=self.timeout)
+            resp = requests.post(self.url, data=templates.get_companies_xml(), timeout=15)
             return resp.status_code == 200
         except Exception:
             return False
@@ -35,6 +35,9 @@ class TallyClient:
             else:
                 logger.error(f"Tally returned status code {response.status_code}")
                 return None
+        except requests.exceptions.ReadTimeout:
+            logger.warning("Tally is processing a large company dataset, query timed out.")
+            return None
         except requests.exceptions.ConnectionError:
             logger.warning(f"Could not connect to Tally on {self.url}. Make sure Tally is open with XML enabled.")
             return None
@@ -43,39 +46,39 @@ class TallyClient:
             return None
 
     def fetch_all_data(self, company_name: str = "") -> Dict[str, Any]:
-        """Fetches companies, ledgers, vouchers, and bills outstanding."""
+        """Fetches companies, ledgers, and vouchers."""
         result = {
             "online": False,
             "companies": [],
             "ledgers": [],
-            "vouchers": [],
-            "receivables": [],
-            "payables": []
+            "vouchers": []
         }
 
-        # Check connection
-        if not self.check_connection():
-            logger.info("Tally XML server offline. Using fallback / offline state.")
-            return result
-
-        result["online"] = True
-
         # 1. Fetch Companies
+        logger.info("Querying company list...")
         cmp_xml = self.query(templates.get_companies_xml())
         if cmp_xml:
+            result["online"] = True
             parsed = parser.parse_tally_xml(cmp_xml)
             result["companies"] = parser.extract_companies(parsed)
+            logger.info(f"Found companies: {[c.get('name') for c in result['companies']]}")
 
         # 2. Fetch Ledgers
+        logger.info("Querying ledger balances (Debtors, Creditors, Banks)...")
         ldg_xml = self.query(templates.get_ledgers_xml(company_name))
         if ldg_xml:
+            result["online"] = True
             parsed = parser.parse_tally_xml(ldg_xml)
             result["ledgers"] = parser.extract_ledgers(parsed)
+            logger.info(f"Extracted {len(result['ledgers'])} ledgers.")
 
         # 3. Fetch Vouchers
+        logger.info("Querying recent vouchers...")
         vch_xml = self.query(templates.get_vouchers_xml(company_name))
         if vch_xml:
+            result["online"] = True
             parsed = parser.parse_tally_xml(vch_xml)
             result["vouchers"] = parser.extract_vouchers(parsed)
+            logger.info(f"Extracted {len(result['vouchers'])} vouchers.")
 
         return result
