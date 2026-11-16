@@ -1,18 +1,24 @@
 @echo off
-title TallyAI Lightweight Push Agent
+title TallyAI Auto Push Agent
 color 0A
-echo ========================================================
-echo        TallyAI Push Agent (Running on Tally PC)
-echo ========================================================
+
+echo ======================================================================
+echo                TallyAI Automatic Push Service
+echo ======================================================================
+echo.
+echo Connecting local Tally Prime (port 9000) to:
+echo   https://tally.plystory.si
 echo.
 
 cd /d "%~dp0"
 
-REM If requirements not installed, install them once
-python -m pip install -r requirements.txt
+REM Step 1: Ensure lightweight dependencies are installed
+echo [1/2] Verifying Python libraries...
+python -m pip install --quiet requests xmltodict python-dotenv
 
+REM Step 2: Run the push sync daemon
+echo [2/2] Starting Tally Sync Loop (press Ctrl+C to stop)...
 echo.
-echo Starting push loop to remote Dokploy server...
 python push_agent.py
 
 pause
