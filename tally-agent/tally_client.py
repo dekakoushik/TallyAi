@@ -13,7 +13,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger("TallyClient")
 
 class TallyClient:
-    def __init__(self, host: str = "http://127.0.0.1", port: int = 9000, timeout: int = 10):
+    def __init__(self, host: str = "http://127.0.0.1", port: int = 9000, timeout: int = 60):
         self.url = f"{host}:{port}"
         self.timeout = timeout
 

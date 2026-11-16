@@ -102,73 +102,100 @@ def trigger_sync(db: Session = Depends(get_db)):
 def receive_pushed_data(payload: dict, db: Session = Depends(get_db)):
     """Receives extracted Tally data directly from the lightweight push agent on the Tally PC."""
     from datetime import datetime
-    total_records = 0
+    try:
+        total_records = 0
 
-    # 1. Companies
-    for c in payload.get("companies", []):
-        existing = db.query(Company).filter(Company.name == c.get("name")).first()
-        if not existing:
-            db.add(Company(tally_guid=c.get("guid", ""), name=c.get("name"), last_sync_at=datetime.utcnow()))
-        else:
-            existing.last_sync_at = datetime.utcnow()
-        total_records += 1
-
-    # 2. Ledgers
-    for l in payload.get("ledgers", []):
-        existing = db.query(Ledger).filter(Ledger.name == l.get("name")).first()
-        if existing:
-            existing.closing_balance = l.get("closing_balance", 0.0)
-            existing.parent_group = l.get("parent_group", "")
-            existing.updated_at = datetime.utcnow()
-        else:
-            db.add(Ledger(
-                tally_guid=l.get("guid", ""),
-                name=l.get("name"),
-                parent_group=l.get("parent_group", ""),
-                closing_balance=l.get("closing_balance", 0.0)
-            ))
-        total_records += 1
-
-    # 3. Vouchers
-    for v in payload.get("vouchers", []):
-        existing = db.query(Voucher).filter(Voucher.voucher_number == v.get("voucher_number")).first()
-        if not existing:
-            db.add(Voucher(
-                tally_guid=v.get("guid", ""),
-                voucher_number=v.get("voucher_number"),
-                voucher_type=v.get("voucher_type"),
-                date=v.get("date"),
-                party_name=v.get("party_name"),
-                amount=v.get("amount", 0.0)
-            ))
+        # 1. Companies
+        for c in payload.get("companies", []) or []:
+            name = c.get("name") if isinstance(c, dict) else str(c)
+            if not name:
+                continue
+            existing = db.query(Company).filter(Company.name == name).first()
+            if not existing:
+                db.add(Company(tally_guid=c.get("guid", ""), name=name, last_sync_at=datetime.utcnow()))
+            else:
+                existing.last_sync_at = datetime.utcnow()
             total_records += 1
 
-    # Refresh Outstanding Bills
-    debtors = db.query(Ledger).filter(Ledger.parent_group == "Sundry Debtors").all()
-    db.query(OutstandingBill).delete()
-    for d in debtors:
-        bal = abs(d.closing_balance)
-        if bal > 0:
-            db.add(OutstandingBill(
-                bill_type="RECEIVABLE",
-                party_name=d.name,
-                bill_number=f"BILL-{d.id:04d}",
-                bill_date="2026-10-15",
-                due_date="2026-11-05",
-                pending_amount=bal,
-                overdue_days=25,
-                aging_bucket="0-30" if bal < 100000 else "31-60"
-            ))
+        # 2. Ledgers
+        for l in payload.get("ledgers", []) or []:
+            name = l.get("name")
+            if not name:
+                continue
+            closing_bal = l.get("closing_balance", 0.0)
+            try:
+                closing_bal = float(closing_bal)
+            except (ValueError, TypeError):
+                closing_bal = 0.0
 
-    log = SyncLog(
-        status="SUCCESS",
-        records_synced=total_records,
-        message=f"Received and synced {total_records} records pushed from Tally PC."
-    )
-    db.add(log)
-    db.commit()
+            existing = db.query(Ledger).filter(Ledger.name == name).first()
+            if existing:
+                existing.closing_balance = closing_bal
+                existing.parent_group = l.get("parent_group", "")
+                existing.updated_at = datetime.utcnow()
+            else:
+                db.add(Ledger(
+                    tally_guid=l.get("guid", ""),
+                    name=name,
+                    parent_group=l.get("parent_group", ""),
+                    closing_balance=closing_bal
+                ))
+            total_records += 1
 
-    return {"success": True, "records_synced": total_records}
+        # 3. Vouchers
+        for v in payload.get("vouchers", []) or []:
+            v_num = v.get("voucher_number")
+            if not v_num:
+                continue
+            amt = v.get("amount", 0.0)
+            try:
+                amt = float(amt)
+            except (ValueError, TypeError):
+                amt = 0.0
+
+            existing = db.query(Voucher).filter(Voucher.voucher_number == v_num).first()
+            if not existing:
+                db.add(Voucher(
+                    tally_guid=v.get("guid", ""),
+                    voucher_number=v_num,
+                    voucher_type=v.get("voucher_type", "Sales"),
+                    date=str(v.get("date", "")),
+                    party_name=v.get("party_name", ""),
+                    amount=amt
+                ))
+                total_records += 1
+
+        # Refresh Outstanding Bills from Debtors
+        debtors = db.query(Ledger).filter(Ledger.parent_group.ilike("%Sundry Debtors%")).all()
+        db.query(OutstandingBill).delete()
+        for d in debtors:
+            bal = abs(d.closing_balance)
+            if bal > 0:
+                db.add(OutstandingBill(
+                    bill_type="RECEIVABLE",
+                    party_name=d.name,
+                    bill_number=f"BILL-{d.id:04d}",
+                    bill_date="2026-10-15",
+                    due_date="2026-11-05",
+                    pending_amount=bal,
+                    overdue_days=25,
+                    aging_bucket="0-30" if bal < 100000 else "31-60"
+                ))
+
+        log = SyncLog(
+            status="SUCCESS",
+            records_synced=total_records,
+            message=f"Received and synced {total_records} records pushed from Tally PC."
+        )
+        db.add(log)
+        db.commit()
+
+        return {"success": True, "records_synced": total_records}
+    except Exception as e:
+        db.rollback()
+        import traceback
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
 
 @router.post("/ask-ai")
 def ask_tally_ai(query: dict, db: Session = Depends(get_db)):
